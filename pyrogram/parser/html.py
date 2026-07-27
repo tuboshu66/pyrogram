@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 
 class Parser(HTMLParser):
     MENTION_RE = re.compile(r"tg://user\?id=(\d+)")
+    CUSTOM_EMOJI_TAGS = {"emoji", "tg-emoji"}
 
     def __init__(self, client: "pyrogram.Client"):
         super().__init__()
@@ -75,9 +76,26 @@ class Parser(HTMLParser):
             else:
                 entity = raw.types.MessageEntityTextUrl
                 extra["url"] = url
-        elif tag == "emoji":
+        # Accept both Pyrogram's <emoji id="..."> syntax and Telegram Bot
+        # API's <tg-emoji emoji-id="..."> syntax.
+        elif tag in Parser.CUSTOM_EMOJI_TAGS:
+            custom_emoji_id = attrs.get("id") or attrs.get("emoji-id")
+
+            if custom_emoji_id is None:
+                log.debug("Ignoring <%s> without a custom emoji id", tag)
+                return
+
+            try:
+                custom_emoji_id = int(custom_emoji_id)
+            except (TypeError, ValueError):
+                log.debug(
+                    "Ignoring <%s> with invalid custom emoji id %r",
+                    tag,
+                    custom_emoji_id
+                )
+                return
+
             entity = raw.types.MessageEntityCustomEmoji
-            custom_emoji_id = int(attrs.get("id"))
             extra["document_id"] = custom_emoji_id
         else:
             return
