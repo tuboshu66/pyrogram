@@ -16,7 +16,11 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with Pyrogram.  If not, see <http://www.gnu.org/licenses/>.
 
+import pytest
+
 import pyrogram
+from pyrogram import raw
+from pyrogram.parser import Parser
 from pyrogram.parser.html import HTML
 
 
@@ -145,3 +149,92 @@ def test_html_unparse_no_entities():
     entities = []
 
     assert HTML.unparse(text=text, entities=entities) == expected
+
+
+def test_html_unparse_custom_emoji():
+    expected = '<emoji id="6307513400956030852">💵</emoji>'
+    text = "💵"
+    entities = pyrogram.types.List(
+        [pyrogram.types.MessageEntity(
+            type=pyrogram.enums.MessageEntityType.CUSTOM_EMOJI,
+            offset=0,
+            length=2,
+            custom_emoji_id=6307513400956030852
+        )])
+
+    assert HTML.unparse(text=text, entities=entities) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<emoji id="6307513400956030852">💵</emoji>',
+        '<tg-emoji emoji-id="6307513400956030852">💵</tg-emoji>',
+    ]
+)
+async def test_html_parse_custom_emoji_syntaxes(markup):
+    parsed = await HTML(None).parse(markup)
+
+    assert parsed["message"] == "💵"
+    assert len(parsed["entities"]) == 1
+
+    entity = parsed["entities"][0]
+    assert isinstance(entity, raw.types.MessageEntityCustomEmoji)
+    assert entity.offset == 0
+    assert entity.length == 2
+    assert entity.document_id == 6307513400956030852
+
+
+@pytest.mark.asyncio
+async def test_html_parse_bot_api_custom_emoji_uses_utf16_offsets():
+    parsed = await HTML(None).parse(
+        '😀余额：<tg-emoji emoji-id="6307513400956030852">💵</tg-emoji>10'
+    )
+
+    assert parsed["message"] == "😀余额：💵10"
+
+    entity = parsed["entities"][0]
+    assert entity.offset == 5
+    assert entity.length == 2
+    assert entity.document_id == 6307513400956030852
+
+
+@pytest.mark.asyncio
+async def test_default_parse_mode_supports_nested_bot_api_custom_emoji():
+    parsed = await Parser(None).parse(
+        '<b>余额：<tg-emoji emoji-id="6307513400956030852">💵</tg-emoji></b>',
+        pyrogram.enums.ParseMode.DEFAULT
+    )
+
+    assert parsed["message"] == "余额：💵"
+    assert any(
+        isinstance(entity, raw.types.MessageEntityBold)
+        for entity in parsed["entities"]
+    )
+
+    custom_emoji = next(
+        entity
+        for entity in parsed["entities"]
+        if isinstance(entity, raw.types.MessageEntityCustomEmoji)
+    )
+    assert custom_emoji.offset == 3
+    assert custom_emoji.length == 2
+    assert custom_emoji.document_id == 6307513400956030852
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<tg-emoji>💵</tg-emoji>",
+        '<tg-emoji emoji-id="not-a-number">💵</tg-emoji>',
+    ]
+)
+async def test_html_parse_invalid_custom_emoji_keeps_fallback_text(markup):
+    parsed = await HTML(None).parse(markup)
+
+    assert parsed == {
+        "message": "💵",
+        "entities": None
+    }
